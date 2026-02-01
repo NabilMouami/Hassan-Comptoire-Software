@@ -1,9 +1,6 @@
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
-const http = require("http");
-const fs = require("fs");
-
-const { spawn, fork } = require("child_process");
+const { fork } = require("child_process");
 
 let mainWindow;
 let backendProcess;
@@ -15,17 +12,13 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
-      preload: null,
     },
   });
-  mainWindow.webContents.openDevTools();
 
   if (app.isPackaged) {
-    // Load frontend from build
     mainWindow.loadFile(path.join(__dirname, "react-build", "index.html"));
   } else {
     mainWindow.loadURL("http://localhost:5173");
-    mainWindow.webContents.openDevTools();
   }
 }
 
@@ -39,55 +32,19 @@ function startBackend() {
       )
     : path.join(__dirname, "backend", "server.js");
 
-  console.log("Starting backend at:", backendPath);
-
   backendProcess = fork(backendPath, [], {
     cwd: path.dirname(backendPath),
     env: {
       ...process.env,
       NODE_ENV: "production",
     },
-    silent: false,
-  });
-
-  backendProcess.on("error", (err) => {
-    console.error("❌ Backend failed:", err);
-  });
-
-  backendProcess.on("exit", (code) => {
-    console.log("Backend exited with code:", code);
+    stdio: "ignore", // 👈 hides backend logs
   });
 }
 
-function waitForBackend(url, retries = 20, delay = 500) {
-  return new Promise((resolve, reject) => {
-    const attempt = () => {
-      http
-        .get(url, () => resolve())
-        .on("error", () => {
-          if (retries === 0) {
-            reject(new Error("Backend not reachable"));
-          } else {
-            retries--;
-            setTimeout(attempt, delay);
-          }
-        });
-    };
-    attempt();
-  });
-}
-
-app.whenReady().then(async () => {
-  createWindow(); // 👈 ALWAYS open window
-
-  startBackend();
-
-  try {
-    await waitForBackend("http://127.0.0.1:5000");
-    console.log("✅ Backend ready");
-  } catch (err) {
-    console.error("❌ Backend failed to start", err);
-  }
+app.whenReady().then(() => {
+  createWindow(); // instant UI
+  startBackend(); // backend starts in background
 });
 
 app.on("before-quit", () => {
