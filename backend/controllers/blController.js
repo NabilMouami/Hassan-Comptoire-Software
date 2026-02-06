@@ -305,6 +305,7 @@ const createBon = async (req, res) => {
       clientId,
       produits,
       mode_reglement,
+      status,
       notes = "",
       date_livraison,
       advancements = [],
@@ -373,6 +374,7 @@ const createBon = async (req, res) => {
         num_bon_livraison,
         client_id: clientId,
         mode_reglement: mode_reglement || "espèces",
+        status,
         montant_ht,
         montant_ttc, // Montant total du bon
         montant_restant: montant_ttc, // Montant restant à payer initial

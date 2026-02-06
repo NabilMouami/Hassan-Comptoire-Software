@@ -308,6 +308,21 @@ BonAchat.belongsToMany(Produit, {
   as: "produits",
 });
 
+// BonAchatProduit associations
+BonAchatProduit.belongsTo(BonAchat, { foreignKey: "bon_achat_id" });
+BonAchatProduit.belongsTo(Produit, { foreignKey: "produit_id" });
+
+// BonAchat associations
+BonAchat.hasMany(BonAchatProduit, {
+  foreignKey: "bon_achat_id",
+  as: "lignes", // or whatever alias you're using
+});
+
+// Produit associations
+Produit.hasMany(BonAchatProduit, {
+  foreignKey: "produit_id",
+});
+
 Produit.belongsToMany(BonAchat, {
   through: BonAchatProduit,
   foreignKey: "produit_id",

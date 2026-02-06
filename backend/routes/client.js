@@ -8,6 +8,11 @@ const {
   deleteClient,
   searchClients,
   getClientStats,
+  getClientSummary,
+  getClientHistory,
+  getClientProductHistory,
+  getClientProductHistoryByReference,
+  getClientPaymentStatus,
 } = require("../controllers/clientController");
 // const { authenticateToken } = require("../middleware/authMiddleware");
 
@@ -22,5 +27,14 @@ router.get("/stats", getClientStats); // Get client statistics (optional)
 router.get("/:id", getClientById); // Get client by ID
 router.put("/:id", updateClient); // Update client by ID
 router.delete("/:id", deleteClient); // Delete client by ID
+
+router.get("/:id/history", getClientHistory);
+
+// GET client summary (quick stats)
+router.get("/:id/summary", getClientSummary);
+router.get("/:id/products", getClientProductHistory);
+router.get("/:id/products-by-reference", getClientProductHistoryByReference);
+// Add this route to your existing client routes
+router.get("/:id/payment-status", getClientPaymentStatus);
 
 module.exports = router;

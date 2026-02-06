@@ -258,6 +258,7 @@ const createFacture = async (req, res) => {
       client_id,
       produits,
       mode_reglement,
+      status,
       tva = 0,
       notes = "",
       date_facturation,
@@ -339,6 +340,7 @@ const createFacture = async (req, res) => {
         client_id,
         bon_livraison_id,
         mode_reglement: mode_reglement || "espèces",
+        status,
         montant_ht: montant_ht_after_remise,
         montant_ht_initial: total_ht_initial,
         tva: tauxTVA,
@@ -350,7 +352,6 @@ const createFacture = async (req, res) => {
         date_facturation,
         date_echeance,
         date_creation: new Date(),
-        status: "brouillon",
       },
       { transaction },
     );

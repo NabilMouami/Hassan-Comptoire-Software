@@ -453,13 +453,6 @@ const updateBonAchat = async (req, res) => {
       throw new Error("Bon d'achat non trouvé");
     }
 
-    // Vérifier les restrictions de modification selon le statut
-    if (["reçu", "payé", "annulé"].includes(bonAchat.status)) {
-      throw new Error(
-        `Impossible de modifier un bon d'achat ${bonAchat.status}`,
-      );
-    }
-
     // Si des produits sont fournis, recalculer les totaux
     if (Array.isArray(produits) && produits.length > 0) {
       // Supprimer les anciennes associations

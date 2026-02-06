@@ -57,7 +57,7 @@ const BonAchat = sequelize.define(
         "commandé",
         "partiellement_reçu",
         "reçu",
-        "partiellement_payé",
+        "partiellement_payée",
         "payé",
         "annulé",
       ),

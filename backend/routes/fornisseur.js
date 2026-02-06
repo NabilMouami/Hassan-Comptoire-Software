@@ -8,6 +8,11 @@ const {
   deleteFornisseur,
   searchFornisseurs,
   getFornisseurStats,
+  getFornisseurBonAchats, // Add this
+  getFornisseurBonAchatsStats, // Add this
+  getFornisseurRecentBonAchats,
+  getFornisseurProductHistoryByReference,
+  getFornisseurPurchasedProductsSummary,
 } = require("../controllers/fornisseurController");
 // const { authenticateToken } = require("../middleware/authMiddleware");
 
@@ -22,5 +27,10 @@ router.get("/stats", getFornisseurStats);
 router.get("/:id", getFornisseurById);
 router.put("/:id", updateFornisseur);
 router.delete("/:id", deleteFornisseur);
-
+// New routes for BonAchats
+router.get("/:id/bon-achats", getFornisseurBonAchats);
+router.get("/:id/bon-achats/stats", getFornisseurBonAchatsStats);
+router.get("/:id/bon-achats/recent", getFornisseurRecentBonAchats);
+router.get("/:id/product-history", getFornisseurProductHistoryByReference);
+router.get("/:id/products-summary", getFornisseurPurchasedProductsSummary);
 module.exports = router;
