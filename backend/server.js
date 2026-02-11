@@ -19,6 +19,7 @@ const devisRoutes = require("./routes/devis");
 const factureRoutes = require("./routes/facture");
 const bonAvoirRoutes = require("./routes/bonAvoir");
 const bonAchatRoutes = require("./routes/bonAchat");
+const reportRoutes = require("./routes/reports");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -83,6 +84,7 @@ app.use("/api/factures", factureRoutes);
 app.use("/api/devis", devisRoutes);
 app.use("/api/bon-avoirs", bonAvoirRoutes);
 app.use("/api/bon-achats", bonAchatRoutes);
+app.use("/api/reports", reportRoutes);
 
 // Health check
 app.get("/", (req, res) => res.json({ message: "API running" }));

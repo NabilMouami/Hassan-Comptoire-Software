@@ -381,7 +381,6 @@ const createBon = async (req, res) => {
         notes,
         date_livraison: date_livraison ? new Date(date_livraison) : null,
         date_creation: new Date(),
-        status: "brouillon",
       },
       { transaction },
     );
