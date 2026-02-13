@@ -371,12 +371,6 @@ const createFacture = async (req, res) => {
         },
         { transaction },
       );
-
-      // 🔥 DECREASE STOCK (ONLY IF NO BL)
-      if (!bon_livraison_id) {
-        p.produit.qty -= parseFloat(p.item.quantite);
-        await p.produit.save({ transaction });
-      }
     }
 
     // ---------------- PAYMENTS ----------------
@@ -863,17 +857,6 @@ const updateFacture = async (req, res) => {
           ],
           transaction,
         });
-
-        // Restore stock for each product
-        for (const fp of factureProduits) {
-          if (fp.produit) {
-            fp.produit.qty += parseFloat(fp.quantite);
-            await fp.produit.save({ transaction });
-            console.log(
-              `Stock restored for product ${fp.produit.id}: +${fp.quantite} units`,
-            );
-          }
-        }
       } else {
         console.log(
           "Facture created from BonLivraison, no stock restoration needed",
@@ -912,17 +895,6 @@ const updateFacture = async (req, res) => {
                 `Stock insuffisant pour ${fp.produit.designation}. Stock disponible: ${fp.produit.qty}, Quantité nécessaire: ${fp.quantite}`,
               );
             }
-          }
-        }
-
-        // Decrease stock for each product
-        for (const fp of factureProduits) {
-          if (fp.produit) {
-            fp.produit.qty -= parseFloat(fp.quantite);
-            await fp.produit.save({ transaction });
-            console.log(
-              `Stock decreased for product ${fp.produit.id}: -${fp.quantite} units`,
-            );
           }
         }
       } else {
@@ -1121,40 +1093,6 @@ const cancelFacture = async (req, res) => {
       });
     }
 
-    // Restituer les quantités de produits
-    if (facture.produits && facture.produits.length > 0) {
-      // Changed from Produits to produits
-      for (const produit of facture.produits) {
-        // Get the quantity from the through table
-        const factureProduit = produit.FactureProduit; // This should be available from the include
-        const quantiteVendue = factureProduit ? factureProduit.quantite : 0;
-
-        if (quantiteVendue > 0) {
-          // If facture was created from BonLivraison, don't restore stock
-          if (!facture.bon_livraison_id) {
-            // Augmenter la quantité en stock
-            await Produit.update(
-              {
-                qty: sequelize.literal(`qty + ${quantiteVendue}`),
-              },
-              {
-                where: { id: produit.id },
-                transaction,
-              },
-            );
-
-            console.log(
-              `Produit ${produit.reference} (ID: ${produit.id}) : +${quantiteVendue} unités restituées`,
-            );
-          } else {
-            console.log(
-              `Produit ${produit.reference} (ID: ${produit.id}) : Non restitué (facture créée depuis bon de livraison)`,
-            );
-          }
-        }
-      }
-    }
-
     // Si des paiements ont été effectués, créer un avoir
     if (facture.montant_paye > 0) {
       // Créer un avoir (negative advancement)
@@ -1234,45 +1172,12 @@ const deleteFacture = async (req, res) => {
     }
 
     // Vérifier si la facture peut être supprimée
-    if (
-      facture.status === "payée" ||
-      facture.status === "partiellement_payée"
-    ) {
-      throw new Error("Impossible de supprimer une facture avec des paiements");
-    }
-
-    // Restituer les quantités de produits avant suppression
-    if (facture.produits && facture.produits.length > 0) {
-      // Changed from Produits to produits
-      for (const produit of facture.produits) {
-        const factureProduit = produit.FactureProduit;
-        const quantiteVendue = factureProduit ? factureProduit.quantite : 0;
-
-        if (quantiteVendue > 0) {
-          // If facture was created from BonLivraison, don't restore stock
-          if (!facture.bon_livraison_id) {
-            // Augmenter la quantité en stock
-            await Produit.update(
-              {
-                qty: sequelize.literal(`qty + ${quantiteVendue}`),
-              },
-              {
-                where: { id: produit.id },
-                transaction,
-              },
-            );
-
-            console.log(
-              `Produit ${produit.reference} (ID: ${produit.id}) : +${quantiteVendue} unités restituées`,
-            );
-          } else {
-            console.log(
-              `Produit ${produit.reference} (ID: ${produit.id}) : Non restitué (facture créée depuis bon de livraison)`,
-            );
-          }
-        }
-      }
-    }
+    // if (
+    //   facture.status === "payée" ||
+    //   facture.status === "partiellement_payée"
+    // ) {
+    //   throw new Error("Impossible de supprimer une facture avec des paiements");
+    // }
 
     // Supprimer les associations produits
     await FactureProduit.destroy({

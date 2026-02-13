@@ -321,6 +321,7 @@ BonAchat.hasMany(BonAchatProduit, {
 // Produit associations
 Produit.hasMany(BonAchatProduit, {
   foreignKey: "produit_id",
+  as: "produit",
 });
 
 Produit.belongsToMany(BonAchat, {

@@ -1877,7 +1877,456 @@ const getClientPaymentStatus = async (req, res) => {
     });
   }
 };
+const getClientProductsByDateRange = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      startDate,
+      endDate,
+      documentType,
+      sortBy = "date_creation",
+      sortOrder = "DESC",
+      page = 1,
+      limit = 100,
+    } = req.query;
 
+    console.log("=== GET CLIENT PRODUCTS BY DATE RANGE ===");
+    console.log("Client ID:", id);
+    console.log("Raw Date Range:", { startDate, endDate });
+    console.log("Document Type:", documentType);
+
+    // Check if client exists
+    const client = await Client.findByPk(id, {
+      attributes: ["id", "nom_complete", "reference", "telephone", "ville"],
+    });
+
+    if (!client) {
+      return res.status(404).json({
+        message: "Client not found",
+      });
+    }
+
+    // Build date filter
+    const buildDateFilter = () => {
+      // If no dates provided, return empty filter
+      if (!startDate && !endDate) {
+        console.log("No date filters provided");
+        return {};
+      }
+
+      const filter = {};
+
+      if (startDate) {
+        // Create date at start of day in local time
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter[Op.gte] = start;
+        console.log("Start date:", start.toString());
+      }
+
+      if (endDate) {
+        // Create date at end of day in local time
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter[Op.lte] = end;
+        console.log("End date:", end.toString());
+      }
+
+      console.log("Date Filter built:", filter);
+      return filter;
+    };
+
+    const dateFilter = buildDateFilter();
+
+    // Check if dateFilter has any properties (including Symbol keys)
+    const hasDateFilter = Object.getOwnPropertySymbols(dateFilter).length > 0;
+    console.log("Has date filter:", hasDateFilter);
+    console.log(
+      "Date filter symbols:",
+      Object.getOwnPropertySymbols(dateFilter).map((sym) => sym.toString()),
+    );
+
+    // Calculate offset for pagination
+    const offset = (page - 1) * limit;
+
+    // Initialize arrays for different document types
+    let devisProducts = [];
+    let bonLivraisonProducts = [];
+    let factureProducts = [];
+
+    /* ===================== FETCH DEVIS PRODUCTS ===================== */
+    if (!documentType || documentType === "devis") {
+      const devisWhere = { client_id: id };
+
+      // Apply date filter if it has values - FIXED: use Object.getOwnPropertySymbols
+      if (hasDateFilter) {
+        devisWhere.date_creation = dateFilter;
+        console.log("Applying date filter to Devis");
+      }
+
+      console.log(
+        "Devis WHERE clause:",
+        JSON.stringify(
+          devisWhere,
+          (key, value) => {
+            if (value instanceof Date) {
+              return value.toISOString();
+            }
+            return value;
+          },
+          2,
+        ),
+      );
+
+      devisProducts = await DevisProduit.findAll({
+        include: [
+          {
+            model: Devis,
+            as: "devis",
+            where: devisWhere,
+            attributes: ["num_devis", "date_creation", "status", "montant_ttc"],
+            required: true,
+          },
+          {
+            model: Produit,
+            as: "produit",
+            attributes: ["id", "designation", "reference", "prix_vente"],
+            required: true,
+          },
+        ],
+        attributes: [
+          "quantite",
+          "prix_unitaire",
+          "total_ligne",
+          [sequelize.literal(`'devis'`), "document_type"],
+        ],
+      });
+
+      console.log(`Found ${devisProducts.length} devis products`);
+
+      // Log the first few devis dates for debugging
+      if (devisProducts.length > 0) {
+        console.log(
+          "Sample devis dates:",
+          devisProducts.slice(0, 3).map((p) => ({
+            date: p.devis.date_creation,
+            formattedDate: new Date(p.devis.date_creation).toLocaleString(),
+            num: p.devis.num_devis,
+          })),
+        );
+      }
+    }
+
+    /* ===================== FETCH BON LIVRAISON PRODUCTS ===================== */
+    if (!documentType || documentType === "bon-livraison") {
+      const blWhere = { client_id: id };
+
+      // Apply date filter if it has values - FIXED: use hasDateFilter
+      if (hasDateFilter) {
+        blWhere.date_creation = dateFilter;
+        console.log("Applying date filter to Bon Livraison");
+      }
+
+      console.log(
+        "Bon Livraison WHERE clause:",
+        JSON.stringify(
+          blWhere,
+          (key, value) => {
+            if (value instanceof Date) {
+              return value.toISOString();
+            }
+            return value;
+          },
+          2,
+        ),
+      );
+
+      bonLivraisonProducts = await BonLivraisonProduit.findAll({
+        include: [
+          {
+            model: BonLivraison,
+            as: "bonLivraison",
+            where: blWhere,
+            attributes: [
+              "id",
+              "num_bon_livraison",
+              "date_creation",
+              "status",
+              "montant_ttc",
+              "is_facture",
+            ],
+            required: true,
+          },
+          {
+            model: Produit,
+            as: "produit",
+            attributes: ["id", "designation", "reference", "prix_vente"],
+            required: true,
+          },
+        ],
+        attributes: [
+          "id",
+          "quantite",
+          "prix_unitaire",
+          "total_ligne",
+          [sequelize.literal(`'bon-livraison'`), "document_type"],
+        ],
+      });
+
+      console.log(
+        `Found ${bonLivraisonProducts.length} bon livraison products`,
+      );
+
+      if (bonLivraisonProducts.length > 0) {
+        console.log(
+          "Sample BL dates:",
+          bonLivraisonProducts.slice(0, 3).map((p) => ({
+            date: p.bonLivraison.date_creation,
+            formattedDate: new Date(
+              p.bonLivraison.date_creation,
+            ).toLocaleString(),
+            num: p.bonLivraison.num_bon_livraison,
+          })),
+        );
+      }
+    }
+
+    /* ===================== FETCH FACTURE PRODUCTS ===================== */
+    if (!documentType || documentType === "facture") {
+      const factureWhere = { client_id: id };
+
+      // Apply date filter if it has values - FIXED: use hasDateFilter
+      if (hasDateFilter) {
+        factureWhere.date_creation = dateFilter;
+        console.log("Applying date filter to Facture");
+      }
+
+      console.log(
+        "Facture WHERE clause:",
+        JSON.stringify(
+          factureWhere,
+          (key, value) => {
+            if (value instanceof Date) {
+              return value.toISOString();
+            }
+            return value;
+          },
+          2,
+        ),
+      );
+
+      factureProducts = await FactureProduit.findAll({
+        include: [
+          {
+            model: Facture,
+            as: "facture",
+            where: factureWhere,
+            attributes: [
+              "id",
+              "num_facture",
+              "date_creation",
+              "status",
+              "montant_ttc",
+            ],
+            required: true,
+          },
+          {
+            model: Produit,
+            as: "produit",
+            attributes: ["id", "designation", "reference", "prix_vente"],
+            required: true,
+          },
+        ],
+        attributes: [
+          "id",
+          "quantite",
+          "prix_unitaire",
+          "total_ligne",
+          [sequelize.literal(`'facture'`), "document_type"],
+        ],
+      });
+
+      console.log(`Found ${factureProducts.length} facture products`);
+
+      if (factureProducts.length > 0) {
+        console.log(
+          "Sample facture dates:",
+          factureProducts.slice(0, 3).map((p) => ({
+            date: p.facture.date_creation,
+            formattedDate: new Date(p.facture.date_creation).toLocaleString(),
+            num: p.facture.num_facture,
+          })),
+        );
+      }
+    }
+
+    /* ===================== FORMAT AND COMBINE RESULTS ===================== */
+    const formatProduct = (item, type) => {
+      const base = {
+        id: item.id,
+        document_type: type,
+        quantite: parseFloat(item.quantite || 0),
+        prix_unitaire: parseFloat(item.prix_unitaire || 0),
+        total_ligne: parseFloat(item.total_ligne || 0),
+        produit: item.produit,
+      };
+
+      if (type === "devis") {
+        return {
+          ...base,
+          document: {
+            num: item.devis.num_devis,
+            status: item.devis.status,
+            montant_ttc: item.devis.montant_ttc,
+          },
+          date_creation: item.devis.date_creation,
+        };
+      } else if (type === "bon-livraison") {
+        return {
+          ...base,
+          document: {
+            id: item.bonLivraison.id,
+            num: item.bonLivraison.num_bon_livraison,
+            status: item.bonLivraison.status,
+            montant_ttc: item.bonLivraison.montant_ttc,
+            is_facture: item.bonLivraison.is_facture,
+          },
+          date_creation: item.bonLivraison.date_creation,
+        };
+      } else if (type === "facture") {
+        return {
+          ...base,
+          document: {
+            id: item.facture.id,
+            num: item.facture.num_facture,
+            status: item.facture.status,
+            montant_ttc: item.facture.montant_ttc,
+          },
+          date_creation: item.facture.date_creation,
+        };
+      }
+    };
+
+    // Combine all results
+    let allProducts = [
+      ...devisProducts.map((item) => formatProduct(item, "devis")),
+      ...bonLivraisonProducts.map((item) =>
+        formatProduct(item, "bon-livraison"),
+      ),
+      ...factureProducts.map((item) => formatProduct(item, "facture")),
+    ];
+
+    console.log(`Total combined products: ${allProducts.length}`);
+
+    // Sort combined results by date
+    allProducts.sort((a, b) => {
+      const dateA = new Date(a.date_creation);
+      const dateB = new Date(b.date_creation);
+      return sortOrder === "DESC" ? dateB - dateA : dateA - dateB;
+    });
+
+    /* ===================== CALCULATE STATISTICS ===================== */
+    const productMap = {};
+
+    allProducts.forEach((item) => {
+      const productId = item.produit.id;
+
+      if (!productMap[productId]) {
+        productMap[productId] = {
+          product: item.produit,
+          totalQuantity: 0,
+          totalAmount: 0,
+          appearances: 0,
+          firstSeen: item.date_creation,
+          lastSeen: item.date_creation,
+          byDocumentType: {
+            devis: { count: 0, totalQuantity: 0, totalAmount: 0 },
+            "bon-livraison": { count: 0, totalQuantity: 0, totalAmount: 0 },
+            facture: { count: 0, totalQuantity: 0, totalAmount: 0 },
+          },
+        };
+      }
+
+      const stats = productMap[productId];
+      stats.totalQuantity += item.quantite;
+      stats.totalAmount += item.total_ligne;
+      stats.appearances += 1;
+
+      const docType = item.document_type;
+      stats.byDocumentType[docType].count += 1;
+      stats.byDocumentType[docType].totalQuantity += item.quantite;
+      stats.byDocumentType[docType].totalAmount += item.total_ligne;
+
+      if (new Date(item.date_creation) < new Date(stats.firstSeen)) {
+        stats.firstSeen = item.date_creation;
+      }
+      if (new Date(item.date_creation) > new Date(stats.lastSeen)) {
+        stats.lastSeen = item.date_creation;
+      }
+    });
+
+    const uniqueProducts = Object.values(productMap);
+
+    // Paginate the detail results
+    const paginatedProducts = allProducts.slice(
+      offset,
+      offset + parseInt(limit),
+    );
+
+    /* ===================== CALCULATE SUMMARY ===================== */
+    const summary = {
+      totalEntries: allProducts.length,
+      totalUniqueProducts: uniqueProducts.length,
+      totalQuantity: uniqueProducts.reduce(
+        (sum, p) => sum + p.totalQuantity,
+        0,
+      ),
+      totalAmount: uniqueProducts.reduce((sum, p) => sum + p.totalAmount, 0),
+      byDocumentType: {
+        devis: devisProducts.length,
+        "bon-livraison": bonLivraisonProducts.length,
+        facture: factureProducts.length,
+      },
+      dateRange: {
+        from: startDate || "Tous",
+        to: endDate || "Aujourd'hui",
+      },
+    };
+
+    console.log("Summary:", summary);
+    console.log("=== END OF REQUEST ===");
+
+    return res.json({
+      message: "Client products retrieved successfully",
+      client: client.toJSON(),
+      summary,
+      productStatistics: uniqueProducts,
+      products: paginatedProducts,
+      pagination: {
+        total: allProducts.length,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(allProducts.length / limit),
+      },
+      filters: {
+        documentType: documentType || "all",
+        startDate,
+        endDate,
+        sortBy,
+        sortOrder,
+      },
+    });
+  } catch (err) {
+    console.error("Error in getClientProductsByDateRange:", err);
+    console.error("Stack:", err.stack);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
+// Export the new function
 module.exports = {
   createClient,
   getAllClients,
@@ -1886,10 +2335,11 @@ module.exports = {
   deleteClient,
   searchClients,
   getClientStats,
-  getClientHistory, // Add this
-  getClientSummary, // Add this
+  getClientHistory,
+  getClientSummary,
   getClientProductHistory,
   getClientProducts,
   getClientProductHistoryByReference,
   getClientPaymentStatus,
+  getClientProductsByDateRange, // ADD THIS NEW EXPORT
 };

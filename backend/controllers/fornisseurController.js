@@ -1623,6 +1623,374 @@ const getFornisseurPurchasedProductsSummary = async (req, res) => {
   }
 };
 
+// Get all products purchased from fornisseur with date range filter
+const getFornisseurProductsByDateRange = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      startDate,
+      endDate,
+      sortBy = "date_creation",
+      sortOrder = "DESC",
+      page = 1,
+      limit = 100,
+    } = req.query;
+
+    console.log("=== GET FORNISSEUR PRODUCTS BY DATE RANGE ===");
+    console.log("Fornisseur ID:", id);
+    console.log("Raw Date Range:", { startDate, endDate });
+
+    // Check if fornisseur exists
+    const fornisseur = await Fornisseur.findByPk(id, {
+      attributes: ["id", "nom_complete", "reference", "telephone", "ville"],
+    });
+
+    if (!fornisseur) {
+      return res.status(404).json({
+        message: "Fornisseur not found",
+      });
+    }
+
+    // Build date filter - FIXED with proper Symbol detection
+    const buildDateFilter = () => {
+      // If no dates provided, return empty filter
+      if (!startDate && !endDate) {
+        console.log("No date filters provided");
+        return {};
+      }
+
+      const filter = {};
+
+      if (startDate) {
+        // Create date at start of day in local time
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        filter[Op.gte] = start;
+        console.log("Start date:", start.toString());
+      }
+
+      if (endDate) {
+        // Create date at end of day in local time
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        filter[Op.lte] = end;
+        console.log("End date:", end.toString());
+      }
+
+      console.log("Date Filter built:", filter);
+      return filter;
+    };
+
+    const dateFilter = buildDateFilter();
+
+    // Check if dateFilter has any properties (including Symbol keys)
+    const hasDateFilter = Object.getOwnPropertySymbols(dateFilter).length > 0;
+    console.log("Has date filter:", hasDateFilter);
+    console.log(
+      "Date filter symbols:",
+      Object.getOwnPropertySymbols(dateFilter).map((sym) => sym.toString()),
+    );
+
+    // Calculate offset for pagination
+    const offset = (page - 1) * limit;
+
+    // Build BonAchat where condition
+    const bonAchatWhere = { fornisseur_id: id };
+
+    // Apply date filter if it has values - FIXED: use hasDateFilter
+    if (hasDateFilter) {
+      bonAchatWhere.date_creation = dateFilter;
+      console.log("Applying date filter to BonAchat");
+    }
+
+    console.log(
+      "BonAchat where condition:",
+      JSON.stringify(
+        bonAchatWhere,
+        (key, value) => {
+          if (value instanceof Date) {
+            return value.toISOString();
+          }
+          return value;
+        },
+        2,
+      ),
+    );
+
+    /* ===================== FETCH BON ACHAT PRODUCTS ===================== */
+    const bonAchatProducts = await BonAchatProduit.findAll({
+      include: [
+        {
+          model: BonAchat,
+          where: bonAchatWhere,
+          attributes: [
+            "id",
+            "num_bon_achat",
+            "date_creation",
+            "status",
+            "montant_ht",
+            "montant_ttc",
+            "mode_reglement",
+            "remise",
+          ],
+          required: true,
+        },
+        {
+          model: Produit,
+          attributes: [
+            "id",
+            "designation",
+            "reference",
+            "prix_achat",
+            "prix_vente",
+          ],
+          required: true,
+        },
+      ],
+      attributes: [
+        "id",
+        "quantite",
+        "prix_unitaire",
+        "remise_ligne",
+        "total_ligne",
+      ],
+    });
+
+    console.log(`Found ${bonAchatProducts.length} bon achat products`);
+
+    // Log sample dates for debugging
+    if (bonAchatProducts.length > 0) {
+      console.log(
+        "Sample bon achat dates:",
+        bonAchatProducts.slice(0, 3).map((p) => ({
+          date: p.BonAchat.date_creation,
+          formattedDate: new Date(p.BonAchat.date_creation).toLocaleString(),
+          num: p.BonAchat.num_bon_achat,
+        })),
+      );
+    }
+
+    /* ===================== FORMAT RESULTS ===================== */
+    const formatProduct = (item) => {
+      // Access models correctly
+      const produit = item.Produit;
+      const bonAchat = item.BonAchat;
+
+      if (!produit || !bonAchat) {
+        console.warn("Missing produit or bonAchat in item:", item.id);
+        return null;
+      }
+
+      return {
+        id: item.id,
+        document_type: "bon-achat",
+        quantite: parseFloat(item.quantite || 0),
+        prix_unitaire: parseFloat(item.prix_unitaire || 0),
+        remise_ligne: parseFloat(item.remise_ligne || 0),
+        total_ligne: parseFloat(item.total_ligne || 0),
+        produit: {
+          id: produit.id,
+          designation: produit.designation,
+          reference: produit.reference,
+          prix_achat: produit.prix_achat,
+          prix_vente: produit.prix_vente,
+        },
+        document: {
+          id: bonAchat.id,
+          num: bonAchat.num_bon_achat,
+          status: bonAchat.status,
+          montant_ht: bonAchat.montant_ht,
+          montant_ttc: bonAchat.montant_ttc,
+          mode_reglement: bonAchat.mode_reglement,
+          remise: bonAchat.remise,
+        },
+        date_creation: bonAchat.date_creation,
+      };
+    };
+
+    // Combine all results and filter out nulls
+    let allProducts = bonAchatProducts
+      .map(formatProduct)
+      .filter((p) => p !== null);
+
+    console.log(`Total combined products: ${allProducts.length}`);
+
+    // Sort combined results by date
+    allProducts.sort((a, b) => {
+      const dateA = new Date(a.date_creation);
+      const dateB = new Date(b.date_creation);
+      return sortOrder === "DESC" ? dateB - dateA : dateA - dateB;
+    });
+
+    /* ===================== CALCULATE STATISTICS ===================== */
+    const productMap = {};
+
+    allProducts.forEach((item) => {
+      const productId = item.produit.id;
+
+      if (!productMap[productId]) {
+        productMap[productId] = {
+          product: item.produit,
+          totalQuantity: 0,
+          totalAmount: 0,
+          totalLineDiscount: 0,
+          appearances: 0,
+          firstSeen: item.date_creation,
+          lastSeen: item.date_creation,
+          averageUnitPrice: 0,
+          minUnitPrice: Infinity,
+          maxUnitPrice: -Infinity,
+          unitPrices: [],
+          byStatus: {},
+          byPaymentMethod: {},
+        };
+      }
+
+      const stats = productMap[productId];
+      const quantity = item.quantite;
+      const unitPrice = item.prix_unitaire;
+      const lineAmount = item.total_ligne;
+      const lineDiscount = item.remise_ligne;
+
+      stats.totalQuantity += quantity;
+      stats.totalAmount += lineAmount;
+      stats.totalLineDiscount += lineDiscount;
+      stats.appearances += 1;
+      stats.unitPrices.push(unitPrice);
+
+      if (unitPrice < stats.minUnitPrice) stats.minUnitPrice = unitPrice;
+      if (unitPrice > stats.maxUnitPrice) stats.maxUnitPrice = unitPrice;
+
+      // Group by status
+      const status = item.document.status;
+      if (!stats.byStatus[status]) {
+        stats.byStatus[status] = { count: 0, totalQuantity: 0, totalAmount: 0 };
+      }
+      stats.byStatus[status].count += 1;
+      stats.byStatus[status].totalQuantity += quantity;
+      stats.byStatus[status].totalAmount += lineAmount;
+
+      // Group by payment method
+      const paymentMethod = item.document.mode_reglement || "non_spécifié";
+      if (!stats.byPaymentMethod[paymentMethod]) {
+        stats.byPaymentMethod[paymentMethod] = {
+          count: 0,
+          totalQuantity: 0,
+          totalAmount: 0,
+        };
+      }
+      stats.byPaymentMethod[paymentMethod].count += 1;
+      stats.byPaymentMethod[paymentMethod].totalQuantity += quantity;
+      stats.byPaymentMethod[paymentMethod].totalAmount += lineAmount;
+
+      if (new Date(item.date_creation) < new Date(stats.firstSeen)) {
+        stats.firstSeen = item.date_creation;
+      }
+      if (new Date(item.date_creation) > new Date(stats.lastSeen)) {
+        stats.lastSeen = item.date_creation;
+      }
+    });
+
+    // Calculate averages and format statistics
+    const uniqueProducts = Object.values(productMap).map((stats) => {
+      // Fix minUnitPrice if it's still Infinity
+      if (stats.minUnitPrice === Infinity) stats.minUnitPrice = 0;
+      if (stats.maxUnitPrice === -Infinity) stats.maxUnitPrice = 0;
+
+      // Calculate average
+      stats.averageUnitPrice =
+        stats.unitPrices.length > 0
+          ? stats.unitPrices.reduce((a, b) => a + b, 0) /
+            stats.unitPrices.length
+          : 0;
+
+      // Convert byStatus to array
+      stats.byStatusArray = Object.entries(stats.byStatus)
+        .filter(([_, data]) => data.count > 0)
+        .map(([status, data]) => ({
+          status,
+          ...data,
+          avgQuantity: data.count > 0 ? data.totalQuantity / data.count : 0,
+          avgAmount: data.count > 0 ? data.totalAmount / data.count : 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      // Convert byPaymentMethod to array
+      stats.byPaymentMethodArray = Object.entries(stats.byPaymentMethod)
+        .map(([method, data]) => ({
+          method,
+          ...data,
+          avgQuantity: data.count > 0 ? data.totalQuantity / data.count : 0,
+          avgAmount: data.count > 0 ? data.totalAmount / data.count : 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      // Clean up temporary properties
+      delete stats.unitPrices;
+      delete stats.byStatus;
+      delete stats.byPaymentMethod;
+
+      return stats;
+    });
+
+    // Paginate the detail results
+    const paginatedProducts = allProducts.slice(
+      offset,
+      offset + parseInt(limit),
+    );
+
+    /* ===================== CALCULATE SUMMARY ===================== */
+    const summary = {
+      totalEntries: allProducts.length,
+      totalUniqueProducts: uniqueProducts.length,
+      totalQuantity: uniqueProducts.reduce(
+        (sum, p) => sum + p.totalQuantity,
+        0,
+      ),
+      totalAmount: uniqueProducts.reduce((sum, p) => sum + p.totalAmount, 0),
+      totalLineDiscount: uniqueProducts.reduce(
+        (sum, p) => sum + p.totalLineDiscount,
+        0,
+      ),
+      dateRange: {
+        from: startDate || "Tous",
+        to: endDate || "Aujourd'hui",
+      },
+    };
+
+    console.log("Summary:", summary);
+    console.log("=== END OF REQUEST ===");
+
+    return res.json({
+      message: "Fornisseur products retrieved successfully",
+      fornisseur: fornisseur.toJSON(),
+      summary,
+      productStatistics: uniqueProducts,
+      products: paginatedProducts,
+      pagination: {
+        total: allProducts.length,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(allProducts.length / limit),
+      },
+      filters: {
+        startDate,
+        endDate,
+        sortBy,
+        sortOrder,
+      },
+    });
+  } catch (err) {
+    console.error("Error in getFornisseurProductsByDateRange:", err);
+    console.error("Stack:", err.stack);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
+// Don't forget to export the new function
 module.exports = {
   createFornisseur,
   getAllFornisseurs,
@@ -1631,9 +1999,10 @@ module.exports = {
   deleteFornisseur,
   searchFornisseurs,
   getFornisseurStats,
-  getFornisseurBonAchats, // Add this
-  getFornisseurBonAchatsStats, // Add this
-  getFornisseurRecentBonAchats, // Add this
+  getFornisseurBonAchats,
+  getFornisseurBonAchatsStats,
+  getFornisseurRecentBonAchats,
   getFornisseurProductHistoryByReference,
   getFornisseurPurchasedProductsSummary,
+  getFornisseurProductsByDateRange, // ADD THIS NEW EXPORT
 };

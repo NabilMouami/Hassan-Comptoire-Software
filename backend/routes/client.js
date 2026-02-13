@@ -13,6 +13,7 @@ const {
   getClientProductHistory,
   getClientProductHistoryByReference,
   getClientPaymentStatus,
+  getClientProductsByDateRange,
 } = require("../controllers/clientController");
 // const { authenticateToken } = require("../middleware/authMiddleware");
 
@@ -36,5 +37,7 @@ router.get("/:id/products", getClientProductHistory);
 router.get("/:id/products-by-reference", getClientProductHistoryByReference);
 // Add this route to your existing client routes
 router.get("/:id/payment-status", getClientPaymentStatus);
+
+router.get("/:id/products-by-date-range", getClientProductsByDateRange);
 
 module.exports = router;

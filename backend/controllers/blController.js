@@ -35,7 +35,6 @@ const generateNumeroBL = async () => {
 };
 
 // Récupérer tous les bons de livraison
-// Récupérer tous les bons de livraison
 const getAllBons = async (req, res) => {
   try {
     const { startDate, endDate, status, clientId } = req.query;
@@ -49,7 +48,7 @@ const getAllBons = async (req, res) => {
       };
     }
 
-    // Filtrer par status
+    // Filtrer par status - DIRECTEMENT dans whereClause
     if (status && status !== "all") {
       whereClause.status = status;
     }
@@ -60,7 +59,7 @@ const getAllBons = async (req, res) => {
     }
 
     const bons = await BonLivraison.findAll({
-      where: whereClause,
+      where: whereClause, // Le status est filtré DIRECTEMENT depuis la base de données
       include: [
         {
           model: Client,
@@ -76,7 +75,7 @@ const getAllBons = async (req, res) => {
           attributes: ["id", "reference", "designation"],
         },
         {
-          model: Advancement, // Ajouter cette inclusion
+          model: Advancement,
           as: "advancements",
           attributes: [
             "id",
@@ -93,7 +92,7 @@ const getAllBons = async (req, res) => {
       order: [["date_creation", "DESC"]],
     });
 
-    // Optionnel: Calculer le total des acomptes pour chaque bon
+    // Traiter tous les bons - SANS changer le status
     const bonsWithTotals = bons.map((bon) => {
       const bonJSON = bon.toJSON();
 
@@ -109,9 +108,11 @@ const getAllBons = async (req, res) => {
       const montantTTC = parseFloat(bonJSON.montant_ttc) || 0;
       const remainingAmount = montantTTC - totalAdvancements;
 
-      // Ajouter les totaux calculés au bon
+      // Retourner le bon avec les données calculées
+      // IMPORTANT: On garde le status ORIGINAL de la base de données (bonJSON.status)
       return {
         ...bonJSON,
+        // status: bonJSON.status, // Déjà inclus dans ...bonJSON
         totalAdvancements: totalAdvancements.toFixed(2),
         remainingAmount:
           remainingAmount > 0 ? remainingAmount.toFixed(2) : "0.00",
@@ -133,6 +134,7 @@ const getAllBons = async (req, res) => {
     });
   }
 };
+
 // Récupérer un bon de livraison spécifique
 // controllers/blController.js
 const getBonById = async (req, res) => {

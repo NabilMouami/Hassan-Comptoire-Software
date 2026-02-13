@@ -13,6 +13,7 @@ const {
   getFornisseurRecentBonAchats,
   getFornisseurProductHistoryByReference,
   getFornisseurPurchasedProductsSummary,
+  getFornisseurProductsByDateRange,
 } = require("../controllers/fornisseurController");
 // const { authenticateToken } = require("../middleware/authMiddleware");
 
@@ -33,4 +34,5 @@ router.get("/:id/bon-achats/stats", getFornisseurBonAchatsStats);
 router.get("/:id/bon-achats/recent", getFornisseurRecentBonAchats);
 router.get("/:id/product-history", getFornisseurProductHistoryByReference);
 router.get("/:id/products-summary", getFornisseurPurchasedProductsSummary);
+router.get("/:id/products-by-date-range", getFornisseurProductsByDateRange);
 module.exports = router;

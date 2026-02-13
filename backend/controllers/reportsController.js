@@ -5,7 +5,7 @@ const BonLivraison = require("../models/BonLivraison");
 const FactureProduit = require("../models/FactureProduit");
 const Produit = require("../models/Produit");
 const Advancement = require("../models/Advancement");
-const { Client } = require("../models");
+const { Client, BonLivraisonProduit } = require("../models");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -96,13 +96,31 @@ const getDashboardSummary = async (req, res) => {
       raw: true,
     });
 
-    // ── Top 5 clients by invoiced TTC ──────────────────────────────────────
-    const topClients = await Facture.findAll({
+    // ── Top 5 clients by Facture TTC ───────────────────────────────────────
+    const topClientsByFactures = await Facture.findAll({
       where: { ...dateFilter, status: { [Op.ne]: "annulée" } },
       attributes: [
         "client_id",
         [fn("COUNT", col("Facture.id")), "nb_factures"],
         [fn("SUM", col("Facture.montant_ttc")), "total_ttc"],
+      ],
+      include: [
+        { model: Client, as: "client", attributes: ["id", "nom_complete"] },
+      ],
+      group: ["client_id", "client.id"],
+      order: [[literal("total_ttc"), "DESC"]],
+      limit: 5,
+      raw: true,
+      nest: true,
+    });
+
+    // ── Top 5 clients by BonLivraison TTC ──────────────────────────────────
+    const topClientsByBLs = await BonLivraison.findAll({
+      where: { ...dateFilter, status: { [Op.ne]: "annulée" } },
+      attributes: [
+        "client_id",
+        [fn("COUNT", col("BonLivraison.id")), "nb_bls"],
+        [fn("SUM", col("BonLivraison.montant_ttc")), "total_ttc"],
       ],
       include: [
         { model: Client, as: "client", attributes: ["id", "nom_complete"] },
@@ -179,7 +197,10 @@ const getDashboardSummary = async (req, res) => {
           advancementTotal?.total_collected || 0,
         ).toFixed(2),
       },
-      top_clients: topClients,
+      top_clients_factures: topClientsByFactures, // ✅ NEW: Top clients by Factures
+      top_clients_bls: topClientsByBLs, // ✅ NEW: Top clients by BLs
+      // ⚠️ DEPRECATED: Keep for backward compatibility
+      top_clients: topClientsByFactures,
     });
   } catch (error) {
     console.error("Erreur dashboard:", error);
@@ -190,7 +211,6 @@ const getDashboardSummary = async (req, res) => {
     });
   }
 };
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. REVENUE OVER TIME (Chart data)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,6 +298,11 @@ const getRevenueOverTime = async (req, res) => {
  * Returns aging analysis of unpaid / partially paid invoices, plus
  * a breakdown by payment method.
  */
+// ============================================================================
+// REPLACE YOUR CURRENT getPaymentStatusReport WITH THIS CODE
+// This version works WITHOUT the montant_paye/montant_restant columns
+// ============================================================================
+
 const getPaymentStatusReport = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -312,32 +337,111 @@ const getPaymentStatusReport = async (req, res) => {
       nest: true,
     });
 
-    // Aging buckets: 0-30, 31-60, 61-90, 90+ days overdue
+    // Outstanding BonLivraison with client details
+    // NO montant_paye or montant_restant fields (they don't exist in DB yet)
+    const outstandingBonLivraisons = await BonLivraison.findAll({
+      where: {
+        ...dateFilter,
+        status: { [Op.in]: ["brouillon", "partiellement_payée"] },
+      },
+      include: [
+        {
+          model: Client,
+          as: "client",
+          attributes: ["id", "nom_complete", "telephone"],
+        },
+      ],
+      attributes: [
+        "id",
+        "num_bon_livraison",
+        "date_creation",
+        "date_livraison",
+        "montant_ttc",
+        "montant_ht",
+        "status",
+        "mode_reglement",
+      ],
+      order: [["montant_ttc", "DESC"]],
+      raw: true,
+      nest: true,
+    });
+
+    // Add calculated montant_paye and montant_restant to BonLivraisons
+    const enrichedBonLivraisons = outstandingBonLivraisons.map((bl) => ({
+      ...bl,
+      montant_paye: 0,
+      montant_restant: parseFloat(bl.montant_ttc || 0),
+    }));
+
+    // Aging buckets for Factures: 0-30, 31-60, 61-90, 90+ days overdue
     const now = new Date();
-    const aging = { "0-30": [], "31-60": [], "61-90": [], "90+": [] };
+    const facturageAging = { "0-30": [], "31-60": [], "61-90": [], "90+": [] };
 
     outstandingFactures.forEach((f) => {
       const daysOld = Math.floor(
         (now - new Date(f.date_facturation)) / (1000 * 60 * 60 * 24),
       );
-      if (daysOld <= 30) aging["0-30"].push(f);
-      else if (daysOld <= 60) aging["31-60"].push(f);
-      else if (daysOld <= 90) aging["61-90"].push(f);
-      else aging["90+"].push(f);
+      if (daysOld <= 30) facturageAging["0-30"].push(f);
+      else if (daysOld <= 60) facturageAging["31-60"].push(f);
+      else if (daysOld <= 90) facturageAging["61-90"].push(f);
+      else facturageAging["90+"].push(f);
     });
 
-    const agingSummary = Object.entries(aging).map(([bucket, items]) => ({
-      bucket,
-      count: items.length,
-      total_restant: items
-        .reduce((s, f) => s + parseFloat(f.montant_restant || 0), 0)
-        .toFixed(2),
-      items,
-    }));
+    const factureAgingSummary = Object.entries(facturageAging).map(
+      ([bucket, items]) => ({
+        bucket,
+        count: items.length,
+        total_restant: items
+          .reduce((s, f) => s + parseFloat(f.montant_restant || 0), 0)
+          .toFixed(2),
+        items,
+      }),
+    );
+
+    // Aging buckets for BonLivraison
+    const bonLivraisonAging = {
+      "0-30": [],
+      "31-60": [],
+      "61-90": [],
+      "90+": [],
+    };
+
+    enrichedBonLivraisons.forEach((bl) => {
+      const daysOld = Math.floor(
+        (now - new Date(bl.date_livraison)) / (1000 * 60 * 60 * 24),
+      );
+      if (daysOld <= 30) bonLivraisonAging["0-30"].push(bl);
+      else if (daysOld <= 60) bonLivraisonAging["31-60"].push(bl);
+      else if (daysOld <= 90) bonLivraisonAging["61-90"].push(bl);
+      else bonLivraisonAging["90+"].push(bl);
+    });
+
+    const bonLivraisonAgingSummary = Object.entries(bonLivraisonAging).map(
+      ([bucket, items]) => ({
+        bucket,
+        count: items.length,
+        total_restant: items
+          .reduce((s, bl) => s + parseFloat(bl.montant_restant || 0), 0)
+          .toFixed(2),
+        items,
+      }),
+    );
 
     // Payment method breakdown (paid invoices)
     const byPaymentMethod = await Facture.findAll({
       where: { ...dateFilter, status: "payée" },
+      attributes: [
+        "mode_reglement",
+        [fn("COUNT", col("id")), "count"],
+        [fn("SUM", col("montant_ttc")), "total_ttc"],
+      ],
+      group: ["mode_reglement"],
+      raw: true,
+    });
+
+    // Payment method breakdown for BonLivraison (paid)
+    const bonLivraisonByPaymentMethod = await BonLivraison.findAll({
+      where: { ...dateFilter, status: "payé" },
       attributes: [
         "mode_reglement",
         [fn("COUNT", col("id")), "count"],
@@ -359,14 +463,39 @@ const getPaymentStatusReport = async (req, res) => {
       raw: true,
     });
 
+    // Calculate totals
+    const totalFactureOutstanding = outstandingFactures
+      .reduce((s, f) => s + parseFloat(f.montant_restant || 0), 0)
+      .toFixed(2);
+
+    const totalBonLivraisonOutstanding = enrichedBonLivraisons
+      .reduce((s, bl) => s + parseFloat(bl.montant_restant || 0), 0)
+      .toFixed(2);
+
+    const totalOutstanding = (
+      parseFloat(totalFactureOutstanding) +
+      parseFloat(totalBonLivraisonOutstanding)
+    ).toFixed(2);
+
     res.json({
       success: true,
-      aging: agingSummary,
-      total_outstanding: outstandingFactures
-        .reduce((s, f) => s + parseFloat(f.montant_restant || 0), 0)
-        .toFixed(2),
-      total_outstanding_count: outstandingFactures.length,
-      payment_methods: byPaymentMethod,
+      factures: {
+        aging: factureAgingSummary,
+        total_outstanding: totalFactureOutstanding,
+        total_outstanding_count: outstandingFactures.length,
+        payment_methods: byPaymentMethod,
+      },
+      bon_livraisons: {
+        aging: bonLivraisonAgingSummary,
+        total_outstanding: totalBonLivraisonOutstanding,
+        total_outstanding_count: enrichedBonLivraisons.length,
+        payment_methods: bonLivraisonByPaymentMethod,
+      },
+      combined_totals: {
+        total_outstanding: totalOutstanding,
+        total_outstanding_count:
+          outstandingFactures.length + enrichedBonLivraisons.length,
+      },
       advancement_methods: advancementByMethod,
     });
   } catch (error) {
@@ -455,10 +584,13 @@ const getClientStatistics = async (req, res) => {
       return acc;
     }, {});
 
+    // ✅ FIXED: Format total_bl_ttc as string to match other fields
     const finalStats = enriched.map((row) => ({
       ...row,
       nb_bls: blByClient[row.client_id]?.nb_bls || 0,
-      total_bl_ttc: blByClient[row.client_id]?.total_bl_ttc || "0.00",
+      total_bl_ttc: parseFloat(
+        blByClient[row.client_id]?.total_bl_ttc || 0,
+      ).toFixed(2),
     }));
 
     res.json({ success: true, clients: finalStats, count: finalStats.length });
@@ -471,7 +603,6 @@ const getClientStatistics = async (req, res) => {
     });
   }
 };
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. PRODUCT / ARTICLE STATISTICS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -488,11 +619,11 @@ const getProductStatistics = async (req, res) => {
     const dateFilter = buildDateRange(startDate, endDate);
 
     // We join through FactureProduit
-    const productStats = await FactureProduit.findAll({
+    const productStats = await BonLivraisonProduit.findAll({
       include: [
         {
-          model: Facture,
-          as: "facture",
+          model: BonLivraison,
+          as: "bonLivraison",
           where: { ...dateFilter, status: { [Op.ne]: "annulée" } },
           attributes: [],
         },
@@ -504,10 +635,9 @@ const getProductStatistics = async (req, res) => {
       ],
       attributes: [
         "produit_id",
-        [fn("COUNT", col("FactureProduit.id")), "nb_lignes"],
+        [fn("COUNT", col("BonLivraisonProduit.id")), "nb_lignes"],
         [fn("SUM", col("quantite")), "total_quantite"],
         [fn("SUM", col("total_ligne")), "total_revenue"],
-        [fn("SUM", col("montant_ht_ligne")), "total_ht"],
         [fn("AVG", col("prix_unitaire")), "avg_prix_unitaire"],
       ],
       group: ["produit_id", "produit.id"],
