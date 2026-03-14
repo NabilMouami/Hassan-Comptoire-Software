@@ -670,8 +670,10 @@ const updateFacture = async (req, res) => {
     // Store old status for stock management
     const oldStatus = facture.status;
 
-    // Vérifier si la facture peut être modifiée
-    if (oldStatus === "payée" || oldStatus === "annulée") {
+    // Allow product updates even for paid/cancelled invoices
+    // But block other updates for paid/cancelled invoices
+    const isProductUpdate = produits && produits.length > 0;
+    if (!isProductUpdate && (oldStatus === "payée" || oldStatus === "annulée")) {
       throw new Error(`Impossible de modifier une facture ${oldStatus}`);
     }
 
