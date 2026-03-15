@@ -912,11 +912,6 @@ const deleteBon = async (req, res) => {
       });
     }
 
-    // Vérifier si le bon peut être supprimé
-    if (bonLivraison.status === "livré" || bonLivraison.status === "facturé") {
-      throw new Error(`Impossible de supprimer un bon ${bonLivraison.status}`);
-    }
-
     // Restaurer le stock - CORRECTED COLUMN NAME
     const produits = await BonLivraisonProduit.findAll({
       where: { bon_livraison_id: id }, // Changed from bonLivraisonId to bon_livraison_id

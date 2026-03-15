@@ -673,7 +673,10 @@ const updateFacture = async (req, res) => {
     // Allow product updates even for paid/cancelled invoices
     // But block other updates for paid/cancelled invoices
     const isProductUpdate = produits && produits.length > 0;
-    if (!isProductUpdate && (oldStatus === "payée" || oldStatus === "annulée")) {
+    if (
+      !isProductUpdate &&
+      (oldStatus === "payée" || oldStatus === "annulée")
+    ) {
       throw new Error(`Impossible de modifier une facture ${oldStatus}`);
     }
 
@@ -1172,14 +1175,6 @@ const deleteFacture = async (req, res) => {
         message: "Facture non trouvée",
       });
     }
-
-    // Vérifier si la facture peut être supprimée
-    // if (
-    //   facture.status === "payée" ||
-    //   facture.status === "partiellement_payée"
-    // ) {
-    //   throw new Error("Impossible de supprimer une facture avec des paiements");
-    // }
 
     // Supprimer les associations produits
     await FactureProduit.destroy({

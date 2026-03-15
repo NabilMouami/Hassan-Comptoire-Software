@@ -611,8 +611,6 @@ const updateDevis = async (req, res) => {
     const { id } = req.params;
     const { produits, mode_reglement, notes, status } = req.body;
 
-    console.log("Req Body: " + JSON.stringify(req.body));
-
     const devis = await Devis.findByPk(id, {
       transaction,
       include: [
